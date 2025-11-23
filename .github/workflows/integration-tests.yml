@@ -5,8 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  issue_comment:
-    types: [created]
+  # Used by the comment workflow to run on a PR head
+  workflow_dispatch: {}
 
 permissions:
   pull-requests: read
@@ -20,33 +20,43 @@ jobs:
   check-should-run:
     name: Check if should run
     runs-on: ubuntu-latest
-
-    # Only run for PRs (not issues) when triggered by issue_comment, and only if comment is /integration
-    if: |
-      github.event_name != 'issue_comment' ||
-      (github.event.issue.pull_request && github.event.comment.body == '/integration')
+    outputs:
+      run-tests: ${{ steps.should-run.outputs.run-tests }}
 
     steps:
       - name: Checkout repository
-        if: github.event_name != 'issue_comment'
         uses: actions/checkout@v4
         with:
-          # On PR events, checkout the PR HEAD commit; otherwise use the event SHA
+          # For PR events, use the PR head SHA; otherwise use the event SHA
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Check for commit tag
-        if: github.event_name != 'issue_comment'
+      - id: should-run
+        name: Decide whether to run tests
         run: |
+          # If triggered manually (workflow_dispatch), always run the tests
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run-tests=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # For push / pull_request, inspect the latest commit message
           COMMIT_MSG="$(git log -1 --pretty=%B)"
-          if [[ "$COMMIT_MSG" != *"[integration]"* ]]; then
-            echo "::notice::Integration tests skipped - commit message does not contain '[integration]' tag"
-            exit 1
+          echo "Last commit message:"
+          echo "$COMMIT_MSG"
+
+          if [[ "$COMMIT_MSG" == *"[integration]"* ]]; then
+            echo "run-tests=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Integration tests skipped - commit message does not contain '[integration]'"
+            echo "run-tests=false" >> "$GITHUB_OUTPUT"
           fi
 
   run-tests:
     name: Run tests
     runs-on: ubuntu-latest
     needs: check-should-run
+    # Only run if the previous job decided we should
+    if: needs.check-should-run.outputs.run-tests == 'true'
     timeout-minutes: 15
 
     steps:
@@ -58,6 +68,8 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Install deps
+        run: npm ci
+
       - name: Run command
-        working-directory: .
         run: npm test
