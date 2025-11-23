@@ -22,31 +22,33 @@ jobs:
       github.event.comment.body == '/integration'
 
     steps:
-      - name: Find latest Integration Tests run for this PR
-        id: find-run
+      - name: Re-run latest Integration Tests for this PR & commit
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
             const prNumber = context.issue.number;
-
             const workflowFileName = 'integration-tests.yml';
 
-            // Get the workflow object (so we have its id)
+            // Get the workflow
             const { data: workflow } = await github.rest.actions.getWorkflow({
               owner,
               repo,
               workflow_id: workflowFileName,
             });
 
-            // Get PR info so we can filter by branch
+            // Get PR info
             const { data: pr } = await github.rest.pulls.get({
               owner,
               repo,
               pull_number: prNumber,
             });
 
+            const headRef = pr.head.ref;
+            const headSha = pr.head.sha;
+
+            // Find the latest run for this workflow, on this branch AND this SHA
             const runs = await github.paginate(
               github.rest.actions.listWorkflowRuns,
               {
@@ -54,18 +56,19 @@ jobs:
                 repo,
                 workflow_id: workflow.id,
                 event: 'pull_request',
-                branch: pr.head.ref,
+                branch: headRef,
                 per_page: 50,
               }
             );
 
-            if (!runs.length) {
-              core.setFailed(`No Integration Tests runs found for PR #${prNumber}`);
+            const run = runs.find(r => r.head_sha === headSha);
+
+            if (!run) {
+              core.setFailed(`No Integration Tests pull_request run found for PR #${prNumber} at SHA ${headSha}`);
               return;
             }
 
-            const run = runs[0]; // latest run
-            core.info(`Re-running workflow run ${run.id} for PR #${prNumber}`);
+            core.info(`Re-running workflow run ${run.id} for PR #${prNumber} (SHA ${headSha})`);
 
             await github.rest.actions.reRunWorkflow({
               owner,

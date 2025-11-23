@@ -27,38 +27,14 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Check for /integration override comment
-        if: github.event_name == 'pull_request'
-        id: comment-check
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const { owner, repo } = context.repo;
-            const prNumber = context.payload.pull_request.number;
-
-            const comments = await github.paginate(
-              github.rest.issues.listComments,
-              { owner, repo, issue_number: prNumber, per_page: 100 }
-            );
-
-            const hasIntegrationComment = comments.some(
-              (c) => c.body.trim() === '/integration'
-            );
-
-            core.info(`Has /integration comment: ${hasIntegrationComment}`);
-            core.setOutput(
-              'has-integration-comment',
-              hasIntegrationComment ? 'true' : 'false'
-            );
-
       - id: decision
         name: Decide whether to run tests
         run: |
           EVENT="${{ github.event_name }}"
-          echo "Event: $EVENT"
+          ATTEMPT='${{ github.run_attempt }}'
 
-          HAS_COMMENT="${{ steps.comment-check.outputs.has-integration-comment || 'false' }}"
+          echo "Event: $EVENT"
+          echo "Run attempt: $ATTEMPT"
 
           COMMIT_MSG="$(git log -1 --pretty=%B)"
           echo "Commit message:"
@@ -66,16 +42,19 @@ jobs:
 
           SHOULD_RUN=false
 
+          # 1) If commit message has [integration], always run tests
           if [[ "$COMMIT_MSG" == *"[integration]"* ]]; then
             SHOULD_RUN=true
-          elif [[ "$EVENT" == "pull_request" && "$HAS_COMMENT" == "true" ]]; then
+          # 2) If this is a re-run (run_attempt > 1) on a PR, allow tests even without the tag
+          elif [ "$EVENT" = "pull_request" ] && [ "$ATTEMPT" -gt 1 ]; then
+            echo "Re-run detected for PR – allowing integration tests without [integration] tag."
             SHOULD_RUN=true
           fi
 
           if [ "$SHOULD_RUN" = "true" ]; then
             echo "run-tests=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::error::Integration tests MUST be explicitly triggered using '[integration]' in the commit message or a '/integration' comment."
+            echo "::error::Integration tests MUST be explicitly triggered using '[integration]' in the commit message."
             echo "run-tests=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
