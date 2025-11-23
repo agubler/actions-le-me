@@ -7,55 +7,83 @@ on:
 permissions:
   contents: read
   pull-requests: read
-  actions: write # Needed to call createWorkflowDispatch
+  actions: write
 
 jobs:
   trigger-integration-tests:
     name: Trigger Integration Tests from comment
     runs-on: ubuntu-latest
 
-    # Only run when:
-    # - the comment is on a PR (not a plain issue)
+    # Only when:
+    # - the comment is on a PR
     # - the comment text is exactly `/integration`
     if: |
       github.event.issue.pull_request &&
       github.event.comment.body == '/integration'
 
     steps:
-      - name: Get PR info
-        id: pr
+      - name: Find latest Integration Tests run for this PR
+        id: find-run
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
-            const pull_number = context.issue.number;
+            const prNumber = context.issue.number;
 
+            const workflowFileName = 'integration-tests.yml';
+
+            // Get the workflow object (so we have its id)
+            const { data: workflow } = await github.rest.actions.getWorkflow({
+              owner,
+              repo,
+              workflow_id: workflowFileName,
+            });
+
+            // Get PR info so we can filter by branch
             const { data: pr } = await github.rest.pulls.get({
               owner,
               repo,
-              pull_number,
+              pull_number: prNumber,
             });
 
-            core.setOutput('head_ref', pr.head.ref);
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRuns,
+              {
+                owner,
+                repo,
+                workflow_id: workflow.id,
+                event: 'pull_request',
+                branch: pr.head.ref,
+                per_page: 50,
+              }
+            );
 
-      - name: Dispatch Integration Tests workflow
+            if (!runs.length) {
+              core.setFailed(`No Integration Tests runs found for PR #${prNumber}`);
+              return;
+            }
+
+            const run = runs[0]; // latest run
+            core.info(`Re-running workflow run ${run.id} for PR #${prNumber}`);
+
+            await github.rest.actions.reRunWorkflow({
+              owner,
+              repo,
+              run_id: run.id,
+            });
+
+      - name: React to comment
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
+            const commentId = context.payload.comment.id;
 
-            // This must match the filename of the main workflow
-            const workflow_id = 'integration-tests.yml';
-
-            const headRef = '${{ steps.pr.outputs.head_ref }}';
-
-            await github.rest.actions.createWorkflowDispatch({
+            await github.rest.reactions.createForIssueComment({
               owner,
               repo,
-              workflow_id,
-              ref: headRef,
+              comment_id: commentId,
+              content: 'rocket',
             });
-
-            core.info(`Dispatched ${workflow_id} on ref ${headRef}`);
