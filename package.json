@@ -1,0 +1,19 @@
+{
+  "name": "actions-le-me",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Success\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agubler/actions-le-me.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/agubler/actions-le-me/issues"
+  },
+  "homepage": "https://github.com/agubler/actions-le-me#readme",
+  "description": ""
+}
